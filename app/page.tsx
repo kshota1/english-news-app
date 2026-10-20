@@ -36,6 +36,7 @@ interface ArticleHistory {
   id: string;
   title: string;
   readAt: string;
+  article: Article;
 }
 
 export default function App() {
@@ -57,7 +58,7 @@ export default function App() {
 
   const wordRefs = useRef<(HTMLSpanElement | null)[]>([]);
 
-  // 15件ニュース取得
+  // ニュース一覧取得
   const fetchRandom15News = async () => {
     setIsLoadingNews(true);
     try {
@@ -92,6 +93,7 @@ export default function App() {
     localStorage.setItem('app_history', JSON.stringify(newHist));
   };
 
+  // 記事の選択・履歴への保持
   const handleSelectArticle = (article: Article) => {
     setSelectedArticle(article);
     setTranslations([]);
@@ -109,8 +111,15 @@ export default function App() {
 
     const now = new Date().toLocaleString('ja-JP');
     const filtered = history.filter((h) => h.id !== article.id);
-    const updatedHistory = [{ id: article.id, title: article.title, readAt: now }, ...filtered];
+    const updatedHistory = [{ id: article.id, title: article.title, readAt: now, article: article }, ...filtered];
     saveHistoryToStorage(updatedHistory);
+  };
+
+  // 閲覧履歴から記事を再表示
+  const handleSelectHistoryArticle = (historyItem: ArticleHistory) => {
+    if (!historyItem.article) return;
+    handleSelectArticle(historyItem.article);
+    setActiveTab('reader');
   };
 
   const fullText = selectedArticle ? selectedArticle.paragraphs.map((p) => p.en).join(' ') : '';
@@ -156,7 +165,7 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // 単語タップ時の翻訳 API 呼び出し
+  // 単語タップ翻訳 API 呼び出し
   const handleWordClick = async (word: string, sentence: string) => {
     const cleanWord = word.replace(/[^a-zA-Z]/g, '').toLowerCase();
     if (!cleanWord) return;
@@ -248,7 +257,6 @@ export default function App() {
               </button>
             </div>
           ) : (
-            /* ボタン表示を「更新」に変更 */
             <button
               onClick={fetchRandom15News}
               disabled={isLoadingNews}
@@ -293,7 +301,6 @@ export default function App() {
         {activeTab === 'reader' && (
           <div>
             {!selectedArticle ? (
-              /* 英字新聞一覧画面（タイトルの下に日本語訳を必ず表示） */
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-gray-500">直近1か月の海外ニュース（最新15件）</span>
@@ -307,16 +314,13 @@ export default function App() {
                       onClick={() => handleSelectArticle(article)}
                       className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 cursor-pointer active:scale-98 transition-transform"
                     >
-                      {/* タイトル上のイメージ画像 */}
                       <img src={article.imageUrl} alt={article.title} className="w-full h-40 object-cover" />
                       <div className="p-4">
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">{article.source}</span>
                           <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">{article.country}</span>
                         </div>
-                        {/* 英語タイトル */}
                         <h2 className="text-sm font-bold text-gray-900 leading-snug">{article.title}</h2>
-                        {/* タイトルの直下に常に表示される日本語訳 */}
                         <p className="text-xs text-blue-800 bg-blue-50/60 p-2 rounded-md mt-2 font-medium leading-normal border-l-2 border-blue-500">
                           {article.translatedTitle}
                         </p>
@@ -326,7 +330,6 @@ export default function App() {
                 )}
               </div>
             ) : (
-              /* 本文画面 */
               <div>
                 <button
                   onClick={() => setSelectedArticle(null)}
@@ -338,7 +341,6 @@ export default function App() {
                 <h1 className="text-base font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
                 <p className="text-xs text-blue-700 bg-blue-50 p-2 rounded mt-1.5 mb-4 font-medium">{selectedArticle.translatedTitle}</p>
 
-                {/* 本文（段落） */}
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
                   {(() => {
                     let runningWordIndex = 0;
@@ -420,22 +422,37 @@ export default function App() {
           </div>
         )}
 
-        {/* 3. 閲覧履歴タブ */}
+        {/* 3. 閲覧履歴タブ（タップで該当ニュース本文を開く） */}
         {activeTab === 'history' && (
           <div className="space-y-3">
-            <h2 className="text-xs font-bold text-gray-500 mb-2">閲覧履歴</h2>
+            <h2 className="text-xs font-bold text-gray-500 mb-2">閲覧履歴（タップで読み直す）</h2>
             {history.length === 0 ? (
               <p className="text-xs text-gray-400 text-center py-8">閲覧履歴はありません</p>
             ) : (
               history.map((item) => (
-                <div key={item.id} className="p-3 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-xs text-gray-900 leading-snug">{item.title}</h3>
+                <div
+                  key={item.id}
+                  onClick={() => handleSelectHistoryArticle(item)}
+                  className="p-3 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-between cursor-pointer active:scale-98 transition-transform hover:border-blue-300"
+                >
+                  <div className="pr-2">
+                    <h3 className="font-bold text-xs text-gray-900 leading-snug">
+                      {item.article ? item.article.title : item.title}
+                    </h3>
+                    {item.article?.translatedTitle && (
+                      <p className="text-[11px] text-blue-700 font-medium mt-1 line-clamp-1">
+                        {item.article.translatedTitle}
+                      </p>
+                    )}
                     <p className="text-[10px] text-gray-400 mt-1">閲覧日時: {item.readAt}</p>
                   </div>
                   <button
-                    onClick={() => handleDeleteHistoryItem(item.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteHistoryItem(item.id);
+                    }}
                     className="p-2 text-gray-400 hover:text-red-500 transition"
+                    title="削除"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
