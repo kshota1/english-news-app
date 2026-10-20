@@ -9,12 +9,29 @@ const NEWS_SOURCES = [
   { source: 'Deutsche Welle', country: 'Germany 🇩🇪', url: 'https://rss.dw.com/rdf/rss-en-all' }
 ];
 
-// 20段落以上の英文構成と段落訳の自動補完
+// HTMLエンティティ（&It;p&gt;等）の完全デコード＆タグ消去関数
+function cleanHTMLText(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&It;/g, '<')
+    .replace(/<[^>]+>/g, '') // タグ消去
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// 20段落以上の英文長文生成
 function expandTo20Paragraphs(title: string, summary: string): { en: string; ja: string }[] {
-  const cleanSummary = summary.replace(/<[^>]+>/g, '').trim();
+  const cleanSummary = cleanHTMLText(summary);
+  const cleanTitleText = cleanHTMLText(title);
 
   return [
-    { en: `In a major global development, ${title} has captured the attention of international observers and policy makers.`, ja: `世界的な重大動向において、${title} が国際的な注目を集めています。` },
+    { en: `In a major global development, ${cleanTitleText} has captured the attention of international observers and policy makers.`, ja: `世界的な重大動向において、${cleanTitleText} が国際的な注目を集めています。` },
     { en: cleanSummary || "Reports indicate significant shifting dynamics across regional and international sectors.", ja: cleanSummary || "報告によると、地域および国際分野全体で重大な情勢変化が示されています。" },
     { en: "Key officials and domain experts gathered early this week to evaluate the broader implications of these developments.", ja: "主要高官や専門家らが今週前半に集まり、これらの動向が及ぼす広範な影響について評価を行いました。" },
     { en: "Initial assessments highlight that immediate adaptive measures are essential to navigate upcoming challenges.", ja: "初期評価では、今後直面する課題に対応するために即座の適応策が不可欠であることが強調されています。" },
@@ -37,15 +54,22 @@ function expandTo20Paragraphs(title: string, summary: string): { en: string; ja:
   ];
 }
 
-// 無料のMyMemory APIを使ってタイトルを自動日本語訳
+// タイムアウト付き高速タイトル翻訳関数
 async function translateTitle(title: string): Promise<string> {
   try {
-    const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(title)}&langpair=en|ja`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2秒タイムアウト設定
+
+    const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(title)}&langpair=en|ja`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
     if (res.ok) {
       const data = await res.json();
       const text = data.responseData?.translatedText;
       if (text && !text.includes('MYMEMORY')) {
-        return text;
+        return cleanHTMLText(text);
       }
     }
   } catch (e) {}
@@ -54,46 +78,76 @@ async function translateTitle(title: string): Promise<string> {
 
 export async function GET() {
   try {
-    const articlePool: any[] = [];
-
-    for (const source of NEWS_SOURCES) {
+    // 1. 全てのニュースソースの取得を Promise.all で並列一斉実行
+    const feedPromises = NEWS_SOURCES.map(async (source) => {
       try {
-        const res = await fetch(source.url, { next: { revalidate: 1800 } });
-        const xmlText = await res.text();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5秒タイムアウト設定
 
+        const res = await fetch(source.url, { 
+          next: { revalidate: 1800 },
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) return [];
+        const xmlText = await res.text();
         const items = xmlText.match(/<item>[\s\S]*?<\/item>/g) || [];
 
+        const articles = [];
         for (let i = 0; i < Math.min(items.length, 5); i++) {
           const item = items[i];
-          const title = item.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>|<title>([\s\S]*?)<\/title>/)?.[1] || item.match(/<title>([\s\S]*?)<\/title>/)?.[1] || '';
-          const description = item.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/)?.[1] || item.match(/<description>([\s\S]*?)<\/description>/)?.[1] || '';
+          const rawTitle = item.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>|<title>([\s\S]*?)<\/title>/)?.[1] || item.match(/<title>([\s\S]*?)<\/title>/)?.[1] || '';
+          const rawDesc = item.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/)?.[1] || item.match(/<description>([\s\S]*?)<\/description>/)?.[1] || '';
 
           let imageUrl = 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=800&q=80';
           const mediaMatch = item.match(/url="(https:\/\/[^"]+\.(jpg|png|jpeg))"/i) || item.match(/src="(https:\/\/[^"]+\.(jpg|png|jpeg))"/i);
           if (mediaMatch) imageUrl = mediaMatch[1];
 
-          const cleanTitle = title.replace(/<[^>]+>/g, '').trim();
+          const cleanTitle = cleanHTMLText(rawTitle);
+          const cleanDesc = cleanHTMLText(rawDesc);
 
           if (cleanTitle) {
-            const translatedTitle = await translateTitle(cleanTitle);
-            const paragraphs = expandTo20Paragraphs(cleanTitle, description);
-
-            articlePool.push({
-              id: `news-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-              title: cleanTitle,
-              translatedTitle: translatedTitle,
-              imageUrl: imageUrl,
+            articles.push({
+              cleanTitle,
+              cleanDesc,
+              imageUrl,
               source: source.source,
               country: source.country,
-              paragraphs: paragraphs
             });
           }
         }
-      } catch (e) {}
-    }
+        return articles;
+      } catch (e) {
+        return [];
+      }
+    });
 
-    const random15 = articlePool.sort(() => Math.random() - 0.5).slice(0, 15);
-    return NextResponse.json(random15);
+    const results = await Promise.all(feedPromises);
+    const articlePool = results.flat();
+
+    // 2. 蓄積プールからランダムで15件抽出
+    const selectedArticles = articlePool.sort(() => Math.random() - 0.5).slice(0, 15);
+
+    // 3. 15件のタイトル日本語訳を一括並列実行
+    const finalArticles = await Promise.all(
+      selectedArticles.map(async (item) => {
+        const translatedTitle = await translateTitle(item.cleanTitle);
+        const paragraphs = expandTo20Paragraphs(item.cleanTitle, item.cleanDesc);
+
+        return {
+          id: `news-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          title: item.cleanTitle,
+          translatedTitle: translatedTitle,
+          imageUrl: item.imageUrl,
+          source: item.source,
+          country: item.country,
+          paragraphs: paragraphs
+        };
+      })
+    );
+
+    return NextResponse.json(finalArticles);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to fetch global news' }, { status: 500 });
   }
