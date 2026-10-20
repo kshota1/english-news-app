@@ -38,30 +38,23 @@ interface ArticleHistory {
   readAt: string;
 }
 
-// 辞書データベース（主要・高頻度単語＋イディオム）
+// ローカル単語・イディオム辞書
 const LOCAL_DICTIONARY: Record<string, string> = {
   "scientists": "科学者たち、研究者",
   "scientist": "科学者、研究者",
   "leaders": "指導者たち、首脳陣",
-  "leader": "指導者、首脳",
   "officials": "政府高官、当局者たち",
-  "official": "高官、公式の",
   "governments": "各国の政府",
-  "government": "政府、統治機構",
-  "researchers": "研究者たち",
-  "researcher": "研究者",
+  "researchers": "研究者たち、調査員",
   "experts": "専門家たち、有識者",
-  "expert": "専門家、有識者",
   "countries": "諸国、各国の",
-  "country": "国家、国",
   "deepsea": "深海の、遠洋の",
-  "deep": "深い、深刻な",
-  "sea": "海、海洋",
-  "ocean": "大洋、海洋",
   "global": "世界的な、地球規模の",
   "climate": "気候、環境",
   "economy": "経済、景気",
   "market": "市場、マーケット",
+  "infrastructure": "社会基盤、インフラ",
+  "development": "発展、開発、動向",
   "break new ground": "新境地を開拓する",
   "keep up with": "〜に遅れずについていく",
   "fall behind": "〜に遅れをとる",
@@ -75,13 +68,9 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentWordGlobalIdx, setCurrentWordGlobalIdx] = useState<number | null>(null);
 
-  // 行頭単語位置インデックス
   const paragraphStartWordIndicesRef = useRef<number[]>([]);
-
-  // すべて翻訳フラグ
   const [showAllTranslations, setShowAllTranslations] = useState<boolean>(false);
 
-  // 翻訳ストリーム・辞書・履歴
   const [translations, setTranslations] = useState<TranslationItem[]>([]);
   const [dictionary, setDictionary] = useState<SavedWord[]>([]);
   const [history, setHistory] = useState<ArticleHistory[]>([]);
@@ -90,24 +79,24 @@ export default function App() {
 
   const wordRefs = useRef<(HTMLSpanElement | null)[]>([]);
 
-  // BBC等のリアル新聞取得APIの呼び出し
-  const fetchRealNews = async () => {
+  // 大量取得プールからランダム15件を取得・更新
+  const fetchRandom15News = async () => {
     setIsLoadingNews(true);
     try {
-      const res = await fetch('/api/news');
+      const res = await fetch(`/api/news?t=${Date.now()}`); // キャッシュ回避
       if (res.ok) {
         const data = await res.json();
         setArticles(data);
       }
     } catch (e) {
-      console.error('Failed to load news from API', e);
+      console.error('Failed to fetch news', e);
     } finally {
       setIsLoadingNews(false);
     }
   };
 
   useEffect(() => {
-    fetchRealNews();
+    fetchRandom15News();
 
     const savedDict = localStorage.getItem('app_dictionary');
     const savedHist = localStorage.getItem('app_history');
@@ -132,7 +121,7 @@ export default function App() {
     window.speechSynthesis?.cancel();
     setIsPlaying(false);
 
-    // 行頭単語の位置（インデックス）を計算
+    // 行頭単語のグローバルインデックス位置を計算
     const startIndices: number[] = [];
     let runningIdx = 0;
     article.paragraphs.forEach((p) => {
@@ -149,7 +138,7 @@ export default function App() {
 
   const fullText = selectedArticle ? selectedArticle.paragraphs.map((p) => p.en).join(' ') : '';
 
-  // 音声読み上げ & 行頭単語のみの自動スクロール
+  // 音声読み上げ & 行頭単語位置での自動スクロール
   const handlePlayVoice = () => {
     if (!selectedArticle || !('speechSynthesis' in window)) return;
 
@@ -176,7 +165,7 @@ export default function App() {
         const wordIndex = fullText.substring(0, charIdx).trim().split(/\s+/).length - 1;
         setCurrentWordGlobalIdx(wordIndex);
 
-        // 各行の最初の単語の時だけ画面スクロール
+        // 各行頭の英語を読んだタイミングでのみ画面をスクロール
         if (paragraphStartWordIndicesRef.current.includes(wordIndex)) {
           if (wordRefs.current[wordIndex]) {
             wordRefs.current[wordIndex]?.scrollIntoView({
@@ -191,7 +180,7 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // 【バグ修正】単語タップ翻訳処理（ローカル辞書 ＋ 高精度外部リアルタイム翻訳API）
+  // 単語タップ翻訳・高精度表示
   const handleWordClick = async (word: string) => {
     const cleanWord = word.replace(/[^a-zA-Z]/g, '').toLowerCase();
     if (!cleanWord) return;
@@ -199,16 +188,13 @@ export default function App() {
     let translatedResult = '';
     let isIdiom = false;
 
-    // 1. ローカル辞書チェック (scientists ➔ 科学者たち)
     if (LOCAL_DICTIONARY[cleanWord]) {
       translatedResult = LOCAL_DICTIONARY[cleanWord];
     } else {
-      // 2. 複数形 (-s) / 過去形 (-ed) / 進行形 (-ing) の語幹変換補正
       const stemWord = cleanWord.replace(/s$/, '').replace(/ed$/, '').replace(/ing$/, '');
       if (LOCAL_DICTIONARY[stemWord]) {
         translatedResult = LOCAL_DICTIONARY[stemWord];
       } else {
-        // 3. 無料の高精度翻訳API（MyMemory）で正確な日本語訳を動的取得
         try {
           const apiRes = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanWord)}&langpair=en|ja`);
           if (apiRes.ok) {
@@ -218,12 +204,10 @@ export default function App() {
               translatedResult = apiTranslation;
             }
           }
-        } catch (e) {
-          // エラー時のフォールバック
-        }
+        } catch (e) {}
 
         if (!translatedResult) {
-          translatedResult = `${cleanWord} (名詞・動詞)`;
+          translatedResult = `${cleanWord}（名詞・動詞）`;
         }
       }
     }
@@ -297,19 +281,19 @@ export default function App() {
             </div>
           ) : (
             <button
-              onClick={fetchRealNews}
+              onClick={fetchRandom15News}
               disabled={isLoadingNews}
-              className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-full text-xs font-semibold flex items-center gap-1 transition"
-              title="BBC等のニュースを再取得"
+              className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-full text-xs font-semibold flex items-center gap-1 transition"
+              title="世界のニュースから15件をランダム更新"
             >
-              <RefreshCw className={`w-4 h-4 ${isLoadingNews ? 'animate-spin' : ''}`} /> BBC等最新再取得
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingNews ? 'animate-spin' : ''}`} /> 15件シャッフル更新
             </button>
           )}
         </div>
       </header>
 
       <main className="max-w-md mx-auto p-4">
-        {/* タブナビゲーション */}
+        {/* タブ */}
         <div className="flex border-b border-gray-200 mb-4 bg-white rounded-lg p-1 shadow-sm">
           <button
             onClick={() => setActiveTab('reader')}
@@ -341,13 +325,13 @@ export default function App() {
         {activeTab === 'reader' && (
           <div>
             {!selectedArticle ? (
-              /* BBC等海外新聞社から実取得した15件のニュース一覧 */
+              /* ランダム表示される15件のニュース一覧 */
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-gray-500">BBC / Guardian / Reuters より最新15件を取得中</span>
+                  <span className="text-xs font-bold text-gray-500">直近1か月の海外ニュースよりランダム15件を表示中</span>
                 </div>
                 {isLoadingNews ? (
-                  <div className="text-center py-12 text-gray-400 text-xs">BBC等の最新ニュースを取得中...</div>
+                  <div className="text-center py-12 text-gray-400 text-xs">ニュースを大量取得中...</div>
                 ) : (
                   articles.map((article) => (
                     <div
@@ -362,13 +346,14 @@ export default function App() {
                           <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">{article.country}</span>
                         </div>
                         <h2 className="text-sm font-bold text-gray-900 mt-1 leading-snug">{article.title}</h2>
+                        <p className="text-xs text-gray-500 mt-1.5 font-medium">{article.translatedTitle}</p>
                       </div>
                     </div>
                   ))
                 )}
               </div>
             ) : (
-              /* 本文画面 */
+              /* 20行（段落）以上の本格ニュース長文表示画面 */
               <div>
                 <button
                   onClick={() => setSelectedArticle(null)}
@@ -377,9 +362,10 @@ export default function App() {
                   ← ニュース一覧に戻る
                 </button>
 
-                <h1 className="text-base font-bold leading-tight text-gray-900 mb-4">{selectedArticle.title}</h1>
+                <h1 className="text-base font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
+                <p className="text-xs text-gray-500 mt-1 mb-4 font-medium">{selectedArticle.translatedTitle}</p>
 
-                {/* 英文本文 */}
+                {/* 20段落本文 */}
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
                   {(() => {
                     let runningWordIndex = 0;
@@ -390,6 +376,7 @@ export default function App() {
 
                       return (
                         <div key={pIdx} className="border-b border-gray-50 pb-3 last:border-0 last:pb-0">
+                          {/* 英文表示 & 単語タップ */}
                           <div className="leading-relaxed text-sm text-gray-800">
                             {words.map((word, wIdx) => {
                               const globalIndex = paragraphStartIndex + wIdx;
@@ -414,9 +401,10 @@ export default function App() {
                             })}
                           </div>
 
+                          {/* 「すべて翻訳」時に各段落（行）の直下に日本語訳を表示 */}
                           {showAllTranslations && (
                             <p className="text-xs text-emerald-700 bg-emerald-50 p-2 rounded mt-2 font-medium leading-normal border-l-2 border-emerald-500">
-                              {paragraph.en} （文脈翻訳）
+                              {paragraph.ja}
                             </p>
                           )}
                         </div>
@@ -432,7 +420,7 @@ export default function App() {
         {/* 2. 単語帳タブ */}
         {activeTab === 'dictionary' && (
           <div className="space-y-3">
-            <h2 className="text-xs font-bold text-gray-500 mb-2">保存した単語帳（個別削除可能）</h2>
+            <h2 className="text-xs font-bold text-gray-500 mb-2">保存した単語帳</h2>
             {dictionary.length === 0 ? (
               <p className="text-xs text-gray-400 text-center py-8">保存された単語はありません</p>
             ) : (
@@ -457,7 +445,7 @@ export default function App() {
         {/* 3. 閲覧履歴タブ */}
         {activeTab === 'history' && (
           <div className="space-y-3">
-            <h2 className="text-xs font-bold text-gray-500 mb-2">閲覧履歴（個別削除可能）</h2>
+            <h2 className="text-xs font-bold text-gray-500 mb-2">閲覧履歴</h2>
             {history.length === 0 ? (
               <p className="text-xs text-gray-400 text-center py-8">閲覧履歴はありません</p>
             ) : (
