@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Square, Bookmark, Trash2, BookOpen, History, RefreshCw, Globe, Languages, ChevronDown, ChevronUp } from 'lucide-react';
+import { Play, Square, Bookmark, Trash2, BookOpen, History, RefreshCw, Globe, Languages, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 
 interface Paragraph {
   en: string;
@@ -38,29 +38,6 @@ interface ArticleHistory {
   readAt: string;
 }
 
-// ローカル単語・イディオム辞書
-const LOCAL_DICTIONARY: Record<string, string> = {
-  "scientists": "科学者たち、研究者",
-  "scientist": "科学者、研究者",
-  "leaders": "指導者たち、首脳陣",
-  "officials": "政府高官、当局者たち",
-  "governments": "各国の政府",
-  "researchers": "研究者たち、調査員",
-  "experts": "専門家たち、有識者",
-  "countries": "諸国、各国の",
-  "deepsea": "深海の、遠洋の",
-  "global": "世界的な、地球規模の",
-  "climate": "気候、環境",
-  "economy": "経済、景気",
-  "market": "市場、マーケット",
-  "infrastructure": "社会基盤、インフラ",
-  "development": "発展、開発、動向",
-  "break new ground": "新境地を開拓する",
-  "keep up with": "〜に遅れずについていく",
-  "fall behind": "〜に遅れをとる",
-  "pave the way": "〜への道を切り開く"
-};
-
 export default function App() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -76,14 +53,15 @@ export default function App() {
   const [history, setHistory] = useState<ArticleHistory[]>([]);
   const [activeTab, setActiveTab] = useState<'reader' | 'dictionary' | 'history'>('reader');
   const [isTranslationPanelExpanded, setIsTranslationPanelExpanded] = useState<boolean>(true);
+  const [isTranslatingWord, setIsTranslatingWord] = useState<boolean>(false);
 
   const wordRefs = useRef<(HTMLSpanElement | null)[]>([]);
 
-  // 大量取得プールからランダム15件を取得・更新
+  // 15件のランダムニュース取得
   const fetchRandom15News = async () => {
     setIsLoadingNews(true);
     try {
-      const res = await fetch(`/api/news?t=${Date.now()}`); // キャッシュ回避
+      const res = await fetch(`/api/news?t=${Date.now()}`);
       if (res.ok) {
         const data = await res.json();
         setArticles(data);
@@ -121,7 +99,6 @@ export default function App() {
     window.speechSynthesis?.cancel();
     setIsPlaying(false);
 
-    // 行頭単語のグローバルインデックス位置を計算
     const startIndices: number[] = [];
     let runningIdx = 0;
     article.paragraphs.forEach((p) => {
@@ -138,7 +115,7 @@ export default function App() {
 
   const fullText = selectedArticle ? selectedArticle.paragraphs.map((p) => p.en).join(' ') : '';
 
-  // 音声読み上げ & 行頭単語位置での自動スクロール
+  // 音声読み上げ & 各行頭単語での自動スクロール
   const handlePlayVoice = () => {
     if (!selectedArticle || !('speechSynthesis' in window)) return;
 
@@ -165,7 +142,6 @@ export default function App() {
         const wordIndex = fullText.substring(0, charIdx).trim().split(/\s+/).length - 1;
         setCurrentWordGlobalIdx(wordIndex);
 
-        // 各行頭の英語を読んだタイミングでのみ画面をスクロール
         if (paragraphStartWordIndicesRef.current.includes(wordIndex)) {
           if (wordRefs.current[wordIndex]) {
             wordRefs.current[wordIndex]?.scrollIntoView({
@@ -180,47 +156,39 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // 単語タップ翻訳・高精度表示
-  const handleWordClick = async (word: string) => {
+  // 【機能追加】前後の英単語（文脈）を含めたAIイディオム判定＆高精度単語翻訳呼び出し
+  const handleWordClick = async (word: string, sentence: string) => {
     const cleanWord = word.replace(/[^a-zA-Z]/g, '').toLowerCase();
     if (!cleanWord) return;
 
-    let translatedResult = '';
-    let isIdiom = false;
+    setIsTranslatingWord(true);
 
-    if (LOCAL_DICTIONARY[cleanWord]) {
-      translatedResult = LOCAL_DICTIONARY[cleanWord];
-    } else {
-      const stemWord = cleanWord.replace(/s$/, '').replace(/ed$/, '').replace(/ing$/, '');
-      if (LOCAL_DICTIONARY[stemWord]) {
-        translatedResult = LOCAL_DICTIONARY[stemWord];
-      } else {
-        try {
-          const apiRes = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanWord)}&langpair=en|ja`);
-          if (apiRes.ok) {
-            const data = await apiRes.json();
-            const apiTranslation = data.responseData?.translatedText;
-            if (apiTranslation && !apiTranslation.includes('MYMEMORY')) {
-              translatedResult = apiTranslation;
-            }
-          }
-        } catch (e) {}
+    try {
+      const res = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word: cleanWord, sentence }),
+      });
 
-        if (!translatedResult) {
-          translatedResult = `${cleanWord}（名詞・動詞）`;
-        }
+      if (res.ok) {
+        const data = await res.json();
+        const displayWord = data.isIdiom && data.idiomPhrase ? `${data.idiomPhrase}` : cleanWord;
+
+        const newItem: TranslationItem = {
+          id: Date.now().toString(),
+          originalText: displayWord,
+          translatedText: data.translatedText,
+          isIdiom: data.isIdiom,
+        };
+
+        setTranslations((prev) => [newItem, ...prev]);
+        setIsTranslationPanelExpanded(true);
       }
+    } catch (e) {
+      console.error('Translation error', e);
+    } finally {
+      setIsTranslatingWord(false);
     }
-
-    const newItem: TranslationItem = {
-      id: Date.now().toString(),
-      originalText: cleanWord,
-      translatedText: translatedResult,
-      isIdiom: isIdiom,
-    };
-
-    setTranslations((prev) => [newItem, ...prev]);
-    setIsTranslationPanelExpanded(true);
   };
 
   const handleSaveToDictionary = (item: TranslationItem) => {
@@ -284,7 +252,6 @@ export default function App() {
               onClick={fetchRandom15News}
               disabled={isLoadingNews}
               className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-full text-xs font-semibold flex items-center gap-1 transition"
-              title="世界のニュースから15件をランダム更新"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoadingNews ? 'animate-spin' : ''}`} /> 15件シャッフル更新
             </button>
@@ -293,7 +260,7 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto p-4">
-        {/* タブ */}
+        {/* タブナビゲーション */}
         <div className="flex border-b border-gray-200 mb-4 bg-white rounded-lg p-1 shadow-sm">
           <button
             onClick={() => setActiveTab('reader')}
@@ -325,13 +292,12 @@ export default function App() {
         {activeTab === 'reader' && (
           <div>
             {!selectedArticle ? (
-              /* ランダム表示される15件のニュース一覧 */
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-gray-500">直近1か月の海外ニュースよりランダム15件を表示中</span>
+                  <span className="text-xs font-bold text-gray-500">直近1か月の海外ニュースより15件を表示中</span>
                 </div>
                 {isLoadingNews ? (
-                  <div className="text-center py-12 text-gray-400 text-xs">ニュースを大量取得中...</div>
+                  <div className="text-center py-12 text-gray-400 text-xs">ニュースを読み込み中...</div>
                 ) : (
                   articles.map((article) => (
                     <div
@@ -353,7 +319,6 @@ export default function App() {
                 )}
               </div>
             ) : (
-              /* 20行（段落）以上の本格ニュース長文表示画面 */
               <div>
                 <button
                   onClick={() => setSelectedArticle(null)}
@@ -376,7 +341,6 @@ export default function App() {
 
                       return (
                         <div key={pIdx} className="border-b border-gray-50 pb-3 last:border-0 last:pb-0">
-                          {/* 英文表示 & 単語タップ */}
                           <div className="leading-relaxed text-sm text-gray-800">
                             {words.map((word, wIdx) => {
                               const globalIndex = paragraphStartIndex + wIdx;
@@ -388,7 +352,8 @@ export default function App() {
                                   ref={(el) => {
                                     wordRefs.current[globalIndex] = el;
                                   }}
-                                  onClick={() => handleWordClick(word)}
+                                  /* タップ時に単語と前後文脈（paragraph.en）をAI解析APIに送信 */
+                                  onClick={() => handleWordClick(word, paragraph.en)}
                                   className={`inline-block cursor-pointer px-0.5 rounded transition-colors ${
                                     isHighlighted
                                       ? 'bg-blue-600 text-white font-bold scale-105'
@@ -401,7 +366,6 @@ export default function App() {
                             })}
                           </div>
 
-                          {/* 「すべて翻訳」時に各段落（行）の直下に日本語訳を表示 */}
                           {showAllTranslations && (
                             <p className="text-xs text-emerald-700 bg-emerald-50 p-2 rounded mt-2 font-medium leading-normal border-l-2 border-emerald-500">
                               {paragraph.ja}
@@ -427,7 +391,14 @@ export default function App() {
               dictionary.map((item) => (
                 <div key={item.id} className="p-3 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-between">
                   <div>
-                    <span className="font-bold text-sm text-gray-900">{item.original}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-sm text-gray-900">{item.original}</span>
+                      {item.isIdiom && (
+                        <span className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0.5 rounded font-bold">
+                          イディオム
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-gray-600 mt-1">{item.translation}</p>
                   </div>
                   <button
@@ -468,14 +439,17 @@ export default function App() {
         )}
       </main>
 
-      {/* 画面下部固定のタップ翻訳パネル */}
+      {/* 画面下部固定のタップ翻訳・AIイディオム解析パネル */}
       {translations.length > 0 && selectedArticle && activeTab === 'reader' && (
         <div className="fixed bottom-0 left-0 right-0 z-50 max-w-md mx-auto bg-white border-t border-gray-300 shadow-2xl rounded-t-2xl overflow-hidden transition-all duration-300">
           <div
             onClick={() => setIsTranslationPanelExpanded(!isTranslationPanelExpanded)}
             className="bg-gray-100 px-4 py-2 flex items-center justify-between cursor-pointer border-b border-gray-200"
           >
-            <span className="text-xs font-bold text-gray-700">タップした英単語・訳 ({translations.length})</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-gray-700">タップした英単語・イディオム訳 ({translations.length})</span>
+              {isTranslatingWord && <span className="text-[10px] text-blue-600 animate-pulse font-bold">AI解析中...</span>}
+            </div>
             <button className="text-gray-500">
               {isTranslationPanelExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
             </button>
@@ -488,8 +462,15 @@ export default function App() {
                   key={item.id}
                   className="p-2.5 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-between"
                 >
-                  <div>
-                    <span className="font-bold text-xs text-gray-900">{item.originalText}</span>
+                  <div className="pr-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-xs text-gray-900">{item.originalText}</span>
+                      {item.isIdiom && (
+                        <span className="bg-amber-100 text-amber-800 text-[9px] px-1.5 py-0.2 rounded font-bold flex items-center gap-0.5">
+                          <Sparkles className="w-2.5 h-2.5" /> イディオム検出
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-gray-700 font-semibold mt-0.5">{item.translatedText}</p>
                   </div>
                   <div className="flex items-center gap-1">
