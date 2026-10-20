@@ -57,7 +57,7 @@ export default function App() {
 
   const wordRefs = useRef<(HTMLSpanElement | null)[]>([]);
 
-  // 15件のランダムニュース取得
+  // 15件ニュース取得
   const fetchRandom15News = async () => {
     setIsLoadingNews(true);
     try {
@@ -115,7 +115,7 @@ export default function App() {
 
   const fullText = selectedArticle ? selectedArticle.paragraphs.map((p) => p.en).join(' ') : '';
 
-  // 音声読み上げ & 各行頭単語での自動スクロール
+  // 音声読み上げ & 行頭自動スクロール
   const handlePlayVoice = () => {
     if (!selectedArticle || !('speechSynthesis' in window)) return;
 
@@ -156,7 +156,7 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // 【機能追加】前後の英単語（文脈）を含めたAIイディオム判定＆高精度単語翻訳呼び出し
+  // 単語タップ時の翻訳 API 呼び出し
   const handleWordClick = async (word: string, sentence: string) => {
     const cleanWord = word.replace(/[^a-zA-Z]/g, '').toLowerCase();
     if (!cleanWord) return;
@@ -216,7 +216,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 pb-44 select-none">
-      {/* 画面上部固定UIヘッダー */}
+      {/* 上部固定ヘッダー */}
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-gray-200 shadow-sm px-4 py-3">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <button
@@ -248,12 +248,13 @@ export default function App() {
               </button>
             </div>
           ) : (
+            /* ボタン表示を「更新」に変更 */
             <button
               onClick={fetchRandom15News}
               disabled={isLoadingNews}
-              className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-full text-xs font-semibold flex items-center gap-1 transition"
+              className="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-full text-xs font-semibold flex items-center gap-1.5 transition active:scale-95"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingNews ? 'animate-spin' : ''}`} /> 15件シャッフル更新
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingNews ? 'animate-spin' : ''}`} /> 更新
             </button>
           )}
         </div>
@@ -292,12 +293,13 @@ export default function App() {
         {activeTab === 'reader' && (
           <div>
             {!selectedArticle ? (
+              /* 英字新聞一覧画面（タイトルの下に日本語訳を必ず表示） */
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-gray-500">直近1か月の海外ニュースより15件を表示中</span>
+                  <span className="text-xs font-bold text-gray-500">直近1か月の海外ニュース（最新15件）</span>
                 </div>
                 {isLoadingNews ? (
-                  <div className="text-center py-12 text-gray-400 text-xs">ニュースを読み込み中...</div>
+                  <div className="text-center py-12 text-gray-400 text-xs">最新ニュースを取得中...</div>
                 ) : (
                   articles.map((article) => (
                     <div
@@ -305,20 +307,26 @@ export default function App() {
                       onClick={() => handleSelectArticle(article)}
                       className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 cursor-pointer active:scale-98 transition-transform"
                     >
+                      {/* タイトル上のイメージ画像 */}
                       <img src={article.imageUrl} alt={article.title} className="w-full h-40 object-cover" />
                       <div className="p-4">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between mb-1">
                           <span className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">{article.source}</span>
                           <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">{article.country}</span>
                         </div>
-                        <h2 className="text-sm font-bold text-gray-900 mt-1 leading-snug">{article.title}</h2>
-                        <p className="text-xs text-gray-500 mt-1.5 font-medium">{article.translatedTitle}</p>
+                        {/* 英語タイトル */}
+                        <h2 className="text-sm font-bold text-gray-900 leading-snug">{article.title}</h2>
+                        {/* タイトルの直下に常に表示される日本語訳 */}
+                        <p className="text-xs text-blue-800 bg-blue-50/60 p-2 rounded-md mt-2 font-medium leading-normal border-l-2 border-blue-500">
+                          {article.translatedTitle}
+                        </p>
                       </div>
                     </div>
                   ))
                 )}
               </div>
             ) : (
+              /* 本文画面 */
               <div>
                 <button
                   onClick={() => setSelectedArticle(null)}
@@ -328,9 +336,9 @@ export default function App() {
                 </button>
 
                 <h1 className="text-base font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
-                <p className="text-xs text-gray-500 mt-1 mb-4 font-medium">{selectedArticle.translatedTitle}</p>
+                <p className="text-xs text-blue-700 bg-blue-50 p-2 rounded mt-1.5 mb-4 font-medium">{selectedArticle.translatedTitle}</p>
 
-                {/* 20段落本文 */}
+                {/* 本文（段落） */}
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
                   {(() => {
                     let runningWordIndex = 0;
@@ -352,7 +360,6 @@ export default function App() {
                                   ref={(el) => {
                                     wordRefs.current[globalIndex] = el;
                                   }}
-                                  /* タップ時に単語と前後文脈（paragraph.en）をAI解析APIに送信 */
                                   onClick={() => handleWordClick(word, paragraph.en)}
                                   className={`inline-block cursor-pointer px-0.5 rounded transition-colors ${
                                     isHighlighted
@@ -439,7 +446,7 @@ export default function App() {
         )}
       </main>
 
-      {/* 画面下部固定のタップ翻訳・AIイディオム解析パネル */}
+      {/* 下部固定タップ翻訳パネル */}
       {translations.length > 0 && selectedArticle && activeTab === 'reader' && (
         <div className="fixed bottom-0 left-0 right-0 z-50 max-w-md mx-auto bg-white border-t border-gray-300 shadow-2xl rounded-t-2xl overflow-hidden transition-all duration-300">
           <div
@@ -447,8 +454,8 @@ export default function App() {
             className="bg-gray-100 px-4 py-2 flex items-center justify-between cursor-pointer border-b border-gray-200"
           >
             <div className="flex items-center gap-1.5">
-              <span className="text-xs font-bold text-gray-700">タップした英単語・イディオム訳 ({translations.length})</span>
-              {isTranslatingWord && <span className="text-[10px] text-blue-600 animate-pulse font-bold">AI解析中...</span>}
+              <span className="text-xs font-bold text-gray-700">タップした英単語・訳 ({translations.length})</span>
+              {isTranslatingWord && <span className="text-[10px] text-blue-600 animate-pulse font-bold">解析中...</span>}
             </div>
             <button className="text-gray-500">
               {isTranslationPanelExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
@@ -467,7 +474,7 @@ export default function App() {
                       <span className="font-bold text-xs text-gray-900">{item.originalText}</span>
                       {item.isIdiom && (
                         <span className="bg-amber-100 text-amber-800 text-[9px] px-1.5 py-0.2 rounded font-bold flex items-center gap-0.5">
-                          <Sparkles className="w-2.5 h-2.5" /> イディオム検出
+                          <Sparkles className="w-2.5 h-2.5" /> イディオム
                         </span>
                       )}
                     </div>
